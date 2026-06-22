@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+screenshots/
+dataset/
+templates/
+macros/
+scrcpy/adb.exe
+scrcpy/*.dll
+scrcpy/scrcpy.exe
+models/
