@@ -70,6 +70,7 @@ class ChatUI:
             ("Files", self._open_file_manager),
             ("Click", self._capture_click),
             ("ScrOff", self._toggle_scroff),
+            ("Scroll", self._toggle_autoscroll),
         ]
         # Add Bac/Hom/Rec buttons in header
         nav_frame = tk.Frame(header, bg="#2d2d2d")
@@ -399,11 +400,17 @@ class ChatUI:
                   bg="#5a5a5a", fg="white",
                   font=("Consolas", 10), relief=tk.FLAT, cursor="hand2", width=10).pack()
     def _editor_add_step_at(self, idx):
-        """Them 1 buoc moi ngay duoi step thu idx"""
+        """Them 1 buoc moi - luu truoc, them sau, mo lai"""
         if not hasattr(self, '_editor_steps') or self._editor_steps is None:
             return
-        from macro_manager import save_macro
-        st = self._editor_steps
+        # Luu cac chinh sua hien tai
+        if hasattr(self, '_do_save') and callable(self._do_save):
+            self._do_save()
+        from macro_manager import save_macro, load_macro
+        macro = load_macro(self._editor_name)
+        if not macro: return
+        st = macro.get("steps", [])
+        if idx >= len(st): idx = len(st) - 1
         ts = (st[idx]["timestamp"] + 5.0) if st else 5.0
         st.insert(idx+1, {"timestamp": ts, "type": "tap", "label": "buoc moi",
             "x": 0, "y": 0, "coords": [[0, 0]],
@@ -413,6 +420,29 @@ class ChatUI:
             self._editor_win.destroy()
         if hasattr(self, '_editor_name'):
             self._open_macro_editor(self._editor_name)
+
+    def _toggle_autoscroll(self):
+        """Tu dong vuot TikTok voi thoi gian ngau nhien"""
+        import random, time, threading
+        if hasattr(self, '_autoscroll_active') and self._autoscroll_active:
+            self._autoscroll_active = False
+            self.bot_say("Da dung tu dong vuot")
+            return
+        self._autoscroll_active = True
+        self.bot_say("Bat dau tu dong vuot TikTok...")
+        def run():
+            from adb_utils import swipe, get_screen_size
+            _, h = get_screen_size()
+            while self._autoscroll_active:
+                delay = random.uniform(15, 45)
+                self.bot_say(f"Cho {delay:.0f}s roi vuot...")
+                time.sleep(delay)
+                if not self._autoscroll_active: break
+                cx = 360
+                swipe(cx, int(h*0.7), cx, int(h*0.3), 300)
+                self.bot_say(f"Da vuot (cho {delay:.0f}s)")
+            self.bot_say("Da dung")
+        threading.Thread(target=run, daemon=True).start()
 
     # === KEY EVENTS ===
 
@@ -542,10 +572,13 @@ class ChatUI:
                            activebackground="#3c3c3c", selectcolor="#2d2d2d").pack(side=tk.LEFT, padx=2)
             tk.Label(row, text=mn, bg="#3c3c3c", fg="#d4d4d4",
                      font=("Consolas", 10), anchor="w", width=22).pack(side=tk.LEFT, padx=5)
-            for t, cmd in [("Sua", do_edit), ("Copy", do_copy), ("Play", do_play), ("Xoa", do_delete)]:
+            def do_chayhet(n=mn):
+                self.command_callback and self.command_callback(f"loop {n}")
+                win.destroy()
+            for t, cmd in [("Sua", do_edit), ("Copy", do_copy), ("Chay het", do_chayhet), ("Play", do_play), ("Xoa", do_delete)]:
                 tk.Button(row, text=t,
                           command=(lambda n=mn, f=cmd: f(n)) if t != "Xoa" else (lambda n=mn, r=row, f=cmd: f(n, r)),
-                          bg="#0e639c" if t=="Play" else "#5a5a5a" if t!="Xoa" else "#8b0000",
+                          bg="#8b4513" if t=="Chay het" else "#0e639c" if t=="Play" else "#5a5a5a" if t!="Xoa" else "#8b0000",
                           fg="white", font=("Consolas",9), relief=tk.FLAT, cursor="hand2", width=8
                           ).pack(side=tk.RIGHT, padx=2)
         def run_seq():
@@ -710,6 +743,18 @@ class ChatUI:
                     try: extra_vars.remove(widget.vt)
                     except: pass
                     widget.destroy()
+                # Play button for extra coord
+                tk.Button(cr, text="Play",
+                          command=lambda xv=xv, yv=yv, tv=tv, dv=dv, lv=lv: (
+                    __import__("adb_utils").tap(int(xv.get()), int(yv.get())) if tv.get() != "swipe"
+                    else __import__("adb_utils").swipe(int(xv.get()), int(yv.get()),
+                        int(xv.get())+(0 if dv.get() in ("up","down") else (200 if dv.get()=="right" else -200)),
+                        int(yv.get())+(0 if dv.get() in ("left","right") else (-200 if dv.get()=="up" else 200)),
+                        300),
+                    self.bot_say(f"Play: {tv.get()} ({xv.get()},{yv.get()})"))[0] if True else None,
+                          bg="#0e639c", fg="white",
+                          font=("Consolas",8), relief=tk.FLAT, cursor="hand2", width=4
+                          ).pack(side=tk.LEFT, padx=1)
                 tk.Button(cr, text="X", command=dl, bg="#5a0000", fg="#ff6b6b",
                           font=("Consolas",8), relief=tk.FLAT, cursor="hand2", width=3
                           ).pack(side=tk.LEFT, padx=2)
@@ -754,20 +799,19 @@ class ChatUI:
                       font=("Consolas",9), relief=tk.FLAT, cursor="hand2", width=3
                       ).pack(side=tk.LEFT, padx=2)
             # Play button - test step
-            def play_this_step(cur=i):
+            def play_this_step(cur=i, xv=mxv, yv=myv, sv_item=sv):
                 from adb_utils import tap as a_tap, swipe as a_swipe
-                st = steps[cur]
-                sx, sy = int(mxv.get()), int(myv.get())
-                tp = sv["type_var"].get()
+                sx, sy = int(xv.get()), int(yv.get())
+                tp = sv_item["type_var"].get()
                 if tp == "text":
                     from adb_utils import _adb, tap as a_tap
                     self.bot_say(f"Dang go text...")
                     a_tap(sx, sy)
-                    cv = sv["clear_var"].get()
+                    cv = sv_item["clear_var"].get()
                     if cv:
                         for _ in range(30):
                             _adb("shell input keyevent 67")
-                    txt = sv["text_var"].get()
+                    txt = sv_item["text_var"].get()
                     if txt:
                         import subprocess
                         from pathlib import Path
@@ -790,8 +834,8 @@ class ChatUI:
                     self.bot_say(f'Play: text "{txt}"')
                     return
                 if tp == "swipe":
-                    dr = sv["dir_var"].get()
-                    lk = sv["len_var"].get()
+                    dr = sv_item["dir_var"].get()
+                    lk = sv_item["len_var"].get()
                     try:
                         pct = int(lk) * 5 if lk.isdigit() else 25
                         from adb_utils import get_screen_size
@@ -870,8 +914,9 @@ class ChatUI:
                     new_step["clear_first"] = cv.get() if cv else False
                 new_steps.append(new_step)
             save_macro(name, new_steps)
-            win.destroy()
+            self._editor_last_save = list(new_steps)
             self.bot_success("Da luu macro: " + name)
+        self._do_save = do_save
 
         bf = tk.Frame(win, bg="#2d2d2d")
         bf.pack(pady=10)
