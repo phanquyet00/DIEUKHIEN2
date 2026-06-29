@@ -21,8 +21,8 @@ class ChatUI:
     def __init__(self, title: str = "TikTok Auto Bot"):
         self.root = tk.Tk()
         self.root.title(title)
-        self.root.geometry("980x850")
-        self.root.minsize(650, 650)
+        self.root.geometry("1200x850")
+        self.root.minsize(800, 650)
         self.root.configure(bg="#1e1e1e")
 
         self.command_callback = None
